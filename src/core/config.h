@@ -59,6 +59,19 @@
 // esto, lo que ayuda a rechazarla.
 #define CLAP_MIN_GAP_MS 250
 
+// Tras encontrar un par de picos que parece un aplauso valido, se espera
+// este tiempo sin ninguna otra rafaga (corta o sostenida) antes de disparar
+// el relevador. Risas y conversacion siguen generando picos despues del
+// "par" que coincidio por casualidad con la ventana; un aplauso deliberado
+// termina en seco (salvo eco/resonancia, que ya se filtra aparte).
+#define CLAP_POST_VALIDATION_MS 500
+
+// Durante la ventana de validacion, un pico posterior NO cancela el
+// candidato si es claramente mas debil que el aplauso (se interpreta como
+// cola de eco/resonancia). Si su rms es igual o mayor a esta fraccion del
+// rms del aplauso, se considera un sonido nuevo (risa/voz) y se cancela.
+#define CLAP_ECHO_TOLERANCE_RATIO 0.6f
+
 // Duracion maxima que puede durar una rafaga por encima del umbral para
 // seguir considerandose un aplauso (transitorio corto). Sonidos sostenidos
 // (toser, respirar cerca del mic, hablar/cantar) duran mas que esto y se

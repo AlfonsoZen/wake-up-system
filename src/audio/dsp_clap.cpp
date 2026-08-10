@@ -49,6 +49,20 @@ float burst_peak_zcr = 0.0f;
 bool waiting_for_second_peak = false;
 uint32_t first_peak_ms = 0;
 
+// Par de picos que parece un aplauso valido, pendiente de confirmar que no
+// venga nada mas detras (risas, conversacion siguen generando ruido).
+bool pending_confirmation = false;
+uint32_t pending_confirm_deadline_ms = 0;
+uint32_t pending_gap_ms = 0;
+float pending_reference_rms = 0.0f;
+
+// true si un pico/rafaga posterior es claramente mas debil que el aplauso
+// que se esta validando (se interpreta como cola de eco, no como sonido
+// nuevo independiente).
+bool looks_like_echo(float rms) {
+    return rms < pending_reference_rms * CLAP_ECHO_TOLERANCE_RATIO;
+}
+
 uint32_t last_level_log_ms = 0;
 
 } // namespace
@@ -61,6 +75,10 @@ void dsp_clap_reset() {
     burst_peak_zcr = 0.0f;
     waiting_for_second_peak = false;
     first_peak_ms = 0;
+    pending_confirmation = false;
+    pending_confirm_deadline_ms = 0;
+    pending_gap_ms = 0;
+    pending_reference_rms = 0.0f;
 }
 
 bool dsp_clap_process(const int16_t *samples, size_t sample_count, uint32_t now_ms) {
@@ -79,6 +97,15 @@ bool dsp_clap_process(const int16_t *samples, size_t sample_count, uint32_t now_
     // Expira la espera del segundo aplauso si se sale de la ventana permitida.
     if (waiting_for_second_peak && (now_ms - first_peak_ms) > CLAP_WINDOW_MS) {
         waiting_for_second_peak = false;
+    }
+
+    // Si ya paso la ventana de validacion sin que nada mas interrumpiera al
+    // candidato, se confirma y se dispara el relevador.
+    if (pending_confirmation && now_ms >= pending_confirm_deadline_ms) {
+        pending_confirmation = false;
+        detected = true;
+        ESP_LOGI(TAG, "Doble aplauso confirmado (separacion=%ums, sin ruido adicional en %ums)",
+                 pending_gap_ms, (unsigned)CLAP_POST_VALIDATION_MS);
     }
 
     if (is_loud) {
@@ -103,10 +130,19 @@ bool dsp_clap_process(const int16_t *samples, size_t sample_count, uint32_t now_
                 // para no perder un aplauso valido cuya cola de eco quede
                 // clasificada como sonido sostenido.
                 burst_invalidated = true;
+                if (pending_confirmation) {
+                    if (looks_like_echo(burst_peak_rms)) {
+                        ESP_LOGI(TAG, "Sonido sostenido tolerado como eco durante validacion (rms=%.1f, aplauso=%.1f)",
+                                 burst_peak_rms, pending_reference_rms);
+                    } else {
+                        pending_confirmation = false;
+                        ESP_LOGI(TAG, "Candidato de aplauso descartado: sonido sostenido durante validacion (posible risa/voz)");
+                    }
+                }
                 ESP_LOGI(TAG, "Sonido sostenido descartado, no es aplauso (rms=%.1f)", burst_peak_rms);
             }
         }
-        return false;
+        return detected;
     }
 
     // !is_loud: si veniamos de una rafaga, este es el flanco de bajada.
@@ -120,14 +156,35 @@ bool dsp_clap_process(const int16_t *samples, size_t sample_count, uint32_t now_
 
         ESP_LOGI(TAG, "Pico de aplauso (dur=%ums, rms=%.1f, zcr=%.3f)", burst_duration_ms, burst_peak_rms, burst_peak_zcr);
 
+        // Un pico nuevo mientras habia un candidato en validacion: si es
+        // claramente mas debil que el aplauso, se tolera como cola de eco.
+        // Si es comparable o mas fuerte, es senal de que el sonido continua
+        // (risa, conversacion) y se descarta el candidato. Este pico igual
+        // se evalua normalmente abajo, por si arranca un nuevo intento.
+        if (pending_confirmation) {
+            if (looks_like_echo(burst_peak_rms)) {
+                ESP_LOGI(TAG, "Pico posterior tolerado como eco (rms=%.1f, aplauso=%.1f)", burst_peak_rms, pending_reference_rms);
+            } else {
+                pending_confirmation = false;
+                ESP_LOGI(TAG, "Candidato de aplauso descartado: pico adicional detectado durante validacion (posible risa/ruido)");
+            }
+        }
+
         if (!waiting_for_second_peak) {
             first_peak_ms = loud_start_ms;
             waiting_for_second_peak = true;
         } else {
             uint32_t gap_ms = loud_start_ms - first_peak_ms;
             if (gap_ms >= CLAP_MIN_GAP_MS && gap_ms <= CLAP_WINDOW_MS) {
-                detected = true;
-                ESP_LOGI(TAG, "Doble aplauso confirmado (separacion=%ums)", gap_ms);
+                // Par candidato encontrado: no se dispara todavia. Se espera
+                // CLAP_POST_VALIDATION_MS sin ruido adicional antes de
+                // confirmarlo (ver arriba).
+                pending_confirmation = true;
+                pending_confirm_deadline_ms = now_ms + CLAP_POST_VALIDATION_MS;
+                pending_gap_ms = gap_ms;
+                pending_reference_rms = burst_peak_rms;
+                ESP_LOGI(TAG, "Par candidato de aplauso (separacion=%ums), validando %ums sin ruido adicional...",
+                         gap_ms, (unsigned)CLAP_POST_VALIDATION_MS);
             } else {
                 ESP_LOGI(TAG, "Segundo pico fuera de rango (separacion=%ums)", gap_ms);
             }
