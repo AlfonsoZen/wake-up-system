@@ -87,11 +87,11 @@ bool dsp_clap_process(const int16_t *samples, size_t sample_count, uint32_t now_
     bool is_loud = rms > CLAP_RMS_THRESHOLD;
     bool detected = false;
 
-    // Nivel RMS actual, una vez por segundo (a nivel INFO, no por cada chunk)
-    // para poder calibrar CLAP_RMS_THRESHOLD sin saturar el log.
+    // Nivel RMS actual, una vez por segundo. Desactivado (mucho ruido en el
+    // log); descomentar para volver a calibrar CLAP_RMS_THRESHOLD.
     if (now_ms - last_level_log_ms >= 1000) {
         last_level_log_ms = now_ms;
-        ESP_LOGI(TAG, "nivel rms=%.1f (umbral=%.1f)", rms, CLAP_RMS_THRESHOLD);
+        // ESP_LOGI(TAG, "nivel rms=%.1f (umbral=%.1f)", rms, CLAP_RMS_THRESHOLD);
     }
 
     // Expira la espera del segundo aplauso si se sale de la ventana permitida.

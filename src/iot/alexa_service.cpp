@@ -3,16 +3,9 @@
 #include <Arduino.h>
 #include <WiFi.h>
 
-// Logging interno de fauxmoESP (peticiones SSDP/UPnP y TCP) por Serial.
-// Descomentar para diagnosticar el descubrimiento de Alexa. Nota: no activar
-// junto con logs verbosos en otras tareas (p.ej. dsp_clap a nivel Debug) -
-// ambos nucleos escribiendo al Serial a la vez puede saturarlo y colgar el
-// firmware.
-// #define DEBUG_FAUXMO Serial
-// #define DEBUG_FAUXMO_VERBOSE_TCP true
-// #define DEBUG_FAUXMO_VERBOSE_UDP true
+#include <SinricPro.h>
+#include <SinricProSwitch.h>
 
-#include <fauxmoESP.h>
 #include <esp_log.h>
 
 #include "core/config.h"
@@ -21,7 +14,6 @@
 namespace {
 
 const char *TAG = "alexa_service";
-fauxmoESP fauxmo;
 QueueHandle_t g_relay_queue = nullptr;
 
 void connect_wifi() {
@@ -33,34 +25,36 @@ void connect_wifi() {
         vTaskDelay(pdMS_TO_TICKS(250));
     }
 
-    // El modo de ahorro de energia del radio Wi-Fi descarta paquetes
-    // multicast/broadcast (como el SSDP M-SEARCH que usa Alexa para
-    // descubrir el dispositivo), asi que se desactiva.
+    // El modo de ahorro de energia del radio Wi-Fi puede cortar la conexion
+    // persistente (WebSocket) que SinricPro mantiene abierta, asi que se
+    // desactiva.
     WiFi.setSleep(false);
 
     ESP_LOGI(TAG, "Wi-Fi conectado, IP: %s", WiFi.localIP().toString().c_str());
 }
 
-void setup_fauxmo() {
-    // fauxmo.handle() se llama desde task_wifi_alexa; el servidor HTTP interno
-    // no necesita correr en su propia tarea.
-    fauxmo.createServer(true);
-    fauxmo.setPort(80);
-    fauxmo.addDevice(ALEXA_DEVICE_NAME);
-    fauxmo.enable(true);
-
-    fauxmo.onSetState([](unsigned char device_id, const char *device_name, bool state, unsigned char value) {
-        (void)device_id;
-        (void)value;
-
-        if (!state || g_relay_queue == nullptr) {
-            return;
-        }
-
-        ESP_LOGI(TAG, "Alexa solicito encender: %s", device_name);
+// Se registra igual para todos los "Switch" de la cuenta: no importa cual
+// alias uso Alexa, todos disparan el mismo encendido del relevador.
+bool on_power_state(const String &device_id, bool &state) {
+    if (state && g_relay_queue != nullptr) {
+        ESP_LOGI(TAG, "Alexa solicito encender (device_id=%s)", device_id.c_str());
         RelayEvent evt = { TriggerSource::ALEXA, (uint32_t)millis() };
         xQueueSend(g_relay_queue, &evt, 0);
-    });
+    }
+    return true; // confirma a SinricPro/Alexa que el comando se proceso
+}
+
+void setup_sinricpro() {
+    static const char *const kDeviceIds[] = SINRICPRO_DEVICE_IDS;
+    for (const char *id : kDeviceIds) {
+        SinricProSwitch &sw = SinricPro[id];
+        sw.onPowerState(on_power_state);
+    }
+
+    SinricPro.onConnected([]() { ESP_LOGI(TAG, "Conectado a SinricPro"); });
+    SinricPro.onDisconnected([]() { ESP_LOGW(TAG, "Desconectado de SinricPro"); });
+
+    SinricPro.begin(SINRICPRO_APP_KEY, SINRICPRO_APP_SECRET);
 }
 
 } // namespace
@@ -69,10 +63,10 @@ void task_wifi_alexa(void *pvParameters) {
     g_relay_queue = (QueueHandle_t)pvParameters;
 
     connect_wifi();
-    setup_fauxmo();
+    setup_sinricpro();
 
     for (;;) {
-        fauxmo.handle();
+        SinricPro.handle();
         vTaskDelay(pdMS_TO_TICKS(10));
     }
 }

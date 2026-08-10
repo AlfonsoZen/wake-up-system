@@ -89,7 +89,10 @@ void task_audio_i2s(void *pvParameters) {
         bytes_since_heartbeat += bytes_read;
         if (now_ms - last_heartbeat_ms >= 1000) {
             last_heartbeat_ms = now_ms;
-            ESP_LOGI(TAG, "I2S OK: %u bytes/seg leidos del DMA", (unsigned)bytes_since_heartbeat);
+            // Heartbeat de diagnostico desactivado (mucho ruido en el log).
+            // Descomentar si hace falta volver a verificar que el DMA I2S
+            // este entregando datos.
+            // ESP_LOGI(TAG, "I2S OK: %u bytes/seg leidos del DMA", (unsigned)bytes_since_heartbeat);
             bytes_since_heartbeat = 0;
         }
 

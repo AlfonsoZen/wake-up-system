@@ -45,7 +45,10 @@ void task_audio_process(void *pvParameters) {
         uint32_t hb_now = millis();
         if (hb_now - last_heartbeat_ms >= 1000) {
             last_heartbeat_ms = hb_now;
-            ESP_LOGI("audio_process", "heartbeat: %u chunks/seg recibidos del ring buffer", (unsigned)chunks_since_heartbeat);
+            // Heartbeat de diagnostico desactivado (mucho ruido en el log).
+            // Descomentar si hace falta volver a verificar que esta tarea
+            // este consumiendo el ring buffer.
+            // ESP_LOGI("audio_process", "heartbeat: %u chunks/seg recibidos del ring buffer", (unsigned)chunks_since_heartbeat);
             chunks_since_heartbeat = 0;
         }
 

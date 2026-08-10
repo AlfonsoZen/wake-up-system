@@ -19,14 +19,22 @@
 #define I2S_SD_PIN 32   // Serial Data
 
 // =====================================================================
-// Wi-Fi / Alexa (fauxmoESP)
+// Wi-Fi / Alexa (SinricPro)
 // =====================================================================
 
 #define WIFI_SSID "IZZI-ED34"
 #define WIFI_PASSWORD "NzMEhxgeZttHc3XzYT"
 
-// Nombre del dispositivo que Alexa descubrira ("Alexa, enciende <nombre>")
-#define ALEXA_DEVICE_NAME "Computadora"
+// Credenciales de la cuenta SinricPro (portal.sinric.pro -> Credentials).
+// Son las mismas para todos los dispositivos de la cuenta.
+#define SINRICPRO_APP_KEY "7b370d71-6400-4123-bfaa-d868df8ba691"
+#define SINRICPRO_APP_SECRET "e82fe98f-dbc1-4184-8d91-d839dede7154-60b29460-89de-4fb0-b2b1-c21feaaafc6b"
+
+// Device ID de cada "Switch" creado en el dashboard de SinricPro. Cada uno
+// es un alias independiente para Alexa (ej. "Computadora", "PC",
+// "Mamalona"), pero todos disparan el mismo encendido del relevador.
+// Agregar mas IDs aqui cuando se creen mas alias en el dashboard.
+#define SINRICPRO_DEVICE_IDS { "6a7a385b09efd1746c3b5f34" } // "Computadora"
 
 // =====================================================================
 // Audio / I2S
@@ -47,17 +55,18 @@
 
 // Umbral de RMS (sobre PCM de 16 bits) por encima del cual se considera un pico.
 // Ajustar experimentalmente segun ganancia del INMP441 y distancia al microfono.
-#define CLAP_RMS_THRESHOLD 3500.0f
+#define CLAP_RMS_THRESHOLD 8500.0f
 
-// Ventana total en la que deben ocurrir los dos aplausos
-#define CLAP_WINDOW_MS 800
+// Ventana total en la que deben ocurrir los dos aplausos. Calibrado al ritmo
+// real del usuario (250-350ms entre golpes), con margen arriba.
+#define CLAP_WINDOW_MS 500
 
 // Separacion minima entre el primer y segundo aplauso. Se exige una pausa
 // clara (patron "clap ... clap" deliberado, no "clap-clap" pegado) porque es
 // mas facil de repetir consistentemente a mano, y porque una tos real suele
 // tener su estructura interna (pop + salida de aire) mucho mas junta que
-// esto, lo que ayuda a rechazarla.
-#define CLAP_MIN_GAP_MS 250
+// esto, lo que ayuda a rechazarla. Margen debajo del minimo real observado.
+#define CLAP_MIN_GAP_MS 200
 
 // Tras encontrar un par de picos que parece un aplauso valido, se espera
 // este tiempo sin ninguna otra rafaga (corta o sostenida) antes de disparar
