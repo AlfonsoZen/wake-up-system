@@ -49,3 +49,46 @@ src/
 │   └── alexa_service.h/.cpp # Gestión Wi-Fi y servidor de emulación Alexa
 └── hardware/
     └── relay_ctrl.h/.cpp    # Inicialización del GPIO y tarea de control
+```
+
+## Roadmap / Próximas funcionalidades (documentado, no implementado aún)
+
+### 1. Corte del circuito cuando la PC ya está encendida o suspendida
+
+**Contexto:** un falso positivo (aplauso, ruido, comando de Alexa accidental) mientras la PC ya está prendida se interpreta como un toque del botón de encendido y puede apagarla/suspenderla sin querer. La forma robusta de evitar esto no es perseguir el heurístico perfecto, sino que el propio circuito sepa el estado real de la PC y se niegue a disparar si ya está encendida.
+
+**Propuesta de hardware:**
+- Tomar la señal del header `+PWR LED` / `-PWR LED` del panel frontal (`JFP1` en la MSI B550 Tomahawk del usuario) — queda en alto cuando la PC está encendida, en bajo cuando está apagada. Confirmar el pinout exacto contra la serigrafía de la placa o el manual antes de conectar (varía entre fabricantes/modelos).
+- Empalmar (no reemplazar) un cable adicional en paralelo a los 2 pines de `PWR_LED`, igual que se hizo con el botón físico de encendido — el LED del gabinete sigue funcionando normal.
+- **Adaptador de nivel:** usar uno de los módulos "4 channel bidirectional I2C logic level converter 3.3V↔5V" que el usuario ya tiene (comprados para el proyecto de LEDs WLED; le sobran 3 de 5 canales libres). Un canal sirve perfecto para esto — no hace falta usarlo en modo I2C, funciona igual de bien para una señal digital simple:
+  - `GND` del módulo → tierra común (ESP32 + motherboard).
+  - `HV` del módulo → +5V.
+  - `LV` del módulo → 3.3V del ESP32.
+  - `HV1` → cable empalmado a `+PWR LED`.
+  - `LV1` → GPIO libre del ESP32 (candidato: GPIO 27 o GPIO 26 — libres en el pinout actual, no son pines de arranque/strapping).
+  - `-PWR LED` → tierra común.
+
+**Nota importante sobre "suspendida":** en la mayoría de las motherboards el LED de power no se apaga limpio en suspensión (S3 sleep) — parpadea lento. Una sola lectura de `digitalRead()` puede caer en alto o bajo según el instante exacto del parpadeo. Para distinguir "encendida o suspendida" (ambos casos: no disparar) de "realmente apagada", el firmware debería samplear el pin varias veces a lo largo de ~1-2 segundos: si hubo cualquier flanco alto en esa ventana, tratarlo como "encendida/suspendida" (no disparar); solo si se mantiene establemente bajo todo ese tiempo, considerarla apagada y permitir el disparo.
+
+**Lógica de firmware (pendiente):** antes de que `task_relay_control` accione el GPIO del relevador, verificar el estado sampleado de este pin y descartar el evento silenciosamente (con un log) si la PC ya está encendida o suspendida.
+
+### 2. Servidor de logs por HTTP (sin cable USB)
+
+**Contexto:** revisar el log de un ESP32 hoy requiere reconectarlo por USB (vía WSL + usbipd, con los problemas de estabilidad ya vividos en este proyecto). Para depurar cómodamente desde cualquier dispositivo (celular, laptop, PC) sin cable:
+
+- Servidor HTTP liviano corriendo en el propio ESP32 (`WebServer.h`, ya incluido en el core de arduino-esp32, sin dependencias nuevas).
+- Buffer circular en RAM (~16KB) que captura todo lo que ya se manda por `ESP_LOGx`, enganchado vía `esp_log_set_vprintf()` — sigue saliendo por Serial igual que ahora, además se duplica al buffer.
+- Página simple con auto-refresco (fetch cada ~1.5s) sirviendo el contenido del buffer como texto plano.
+- mDNS (`ESPmDNS.h`, también incluido en el core) para entrar por `http://wake-up-system.local/` en vez de memorizar la IP.
+- Corre como una tarea FreeRTOS más, en CORE 0 (IoT/Red), junto a las demás tareas de red.
+
+**A futuro (cuando haya varios ESP32):** un servidor web por dispositivo escala mal (hay que visitar N IPs/hostnames distintos). La evolución natural es que cada ESP32 mande sus logs a un agregador central (home lab / Raspberry Pi / la propia PC, algo tipo Grafana+Loki o un syslog simple) en vez de que cada uno sirva su propia página. Por ahora, con un solo dispositivo, el servidor HTTP directo en el ESP32 es suficiente.
+
+### 3. Actualización de firmware inalámbrica (OTA)
+
+Es posible con `ArduinoOTA` (incluido en el core de arduino-esp32, sin dependencias nuevas).
+
+- **La primera carga siempre tiene que ser por USB** — el ESP32 necesita estar corriendo un firmware que ya tenga `ArduinoOTA.begin()` activo antes de poder recibir la siguiente actualización por red. A partir de ahí, `pio run --target upload` puede apuntar a la IP del ESP32 en vez del puerto USB (`upload_protocol = espota`, `upload_port = <ip-del-esp32>` en `platformio.ini`).
+- **Cuidado de no "olvidar" el código de OTA en una actualización futura** — si se sube un firmware que ya no llama `ArduinoOTA.begin()`, se pierde la vía inalámbrica y hay que reconectar el cable USB una vez para recuperarla.
+- Conviene ponerle contraseña (`ArduinoOTA.setPassword(...)`) ya que cualquier dispositivo en la misma red podría intentar mandar un firmware si no se protege.
+- Se puede combinar con el servidor de logs: ambos corren como tareas de red en CORE 0.

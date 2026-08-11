@@ -117,11 +117,12 @@ src/
 
 ## Estado actual
 
-- [x] Encendido por Alexa (fauxmoESP)
-- [x] Encendido por doble aplauso (DSP por energía + duración)
+- [x] Encendido por Alexa (SinricPro — fauxmoESP se descartó por incompatibilidad con Echos modernos, ver `CLAUDE.md`)
+- [x] Encendido por doble aplauso (RMS + duración + timing + silencio antes/después del golpe)
 - [x] Cooldown de seguridad contra falsos positivos en racha
 - [ ] Frase mágica (Edge Impulse) — firmware listo, falta entrenar/integrar el modelo
-- [ ] Calibración fina del detector de aplausos para reducir falsos positivos por tos
+- [ ] Corte de seguridad cuando la PC ya está encendida/suspendida — evita que un falso positivo la apague (ver `CLAUDE.md`)
+- [ ] Servidor de logs por HTTP + actualización de firmware inalámbrica (OTA) (ver `CLAUDE.md`)
 
 ---
 
