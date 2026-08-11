@@ -92,3 +92,77 @@ Es posible con `ArduinoOTA` (incluido en el core de arduino-esp32, sin dependenc
 - **Cuidado de no "olvidar" el código de OTA en una actualización futura** — si se sube un firmware que ya no llama `ArduinoOTA.begin()`, se pierde la vía inalámbrica y hay que reconectar el cable USB una vez para recuperarla.
 - Conviene ponerle contraseña (`ArduinoOTA.setPassword(...)`) ya que cualquier dispositivo en la misma red podría intentar mandar un firmware si no se protege.
 - Se puede combinar con el servidor de logs: ambos corren como tareas de red en CORE 0.
+
+## Bugs conocidos / deuda técnica (detectados, no corregidos)
+
+Detectados en la revisión del 2026-08-11 sobre el código de la v2.1.1. Cada uno es
+independiente y se puede atacar por separado desde cualquier máquina.
+
+### B1. El switch de SinricPro nunca vuelve a reportar estado "apagado"
+
+**Dónde:** `src/iot/alexa_service.cpp`, callback `on_power_state()`.
+
+**Síntoma:** el relevador es un pulso momentáneo (500ms), pero para Alexa/SinricPro el
+dispositivo queda marcado como "encendido" de forma permanente después del primer
+comando. El callback confirma la orden (`return true`) y nunca emite el evento inverso.
+Consecuencia: al segundo "Alexa, enciende la computadora" el asistente puede considerar
+que ya está en ese estado y responder sin volver a mandar la directiva, dejando el
+disparo por voz inutilizable hasta reiniciar el ESP32.
+
+**Arreglo propuesto:** después de que el relevador complete el pulso, emitir
+`sw.sendPowerStateEvent(false)` para que el dispositivo vuelva a estado OFF y se comporte
+como un botón momentáneo. Requiere que la tarea del relevador pueda notificar de vuelta
+al servicio IoT (una segunda `Queue` de confirmación, o exponer una función
+`alexa_service_report_off()` que `task_relay_control` invoque tras el pulso).
+Ojo: `sendPowerStateEvent` debe llamarse desde el contexto de la tarea de red
+(CORE 0), no directamente desde `task_relay_control`.
+
+### B2. No hay reconexión de Wi-Fi
+
+**Dónde:** `src/iot/alexa_service.cpp`, `connect_wifi()` y el loop de `task_wifi_alexa()`.
+
+**Síntoma:** `connect_wifi()` bloquea en un `while (WiFi.status() != WL_CONNECTED)` una
+sola vez al arranque y nunca se vuelve a evaluar. Si el router se reinicia o la señal se
+cae, SinricPro sigue reintentando su WebSocket sobre una interfaz caída y el disparo por
+Alexa queda muerto hasta un reset manual del ESP32. Los disparos por aplauso/ML sí
+siguen funcionando (corren en CORE 1, independientes de la red).
+
+**Arreglo propuesto:** agregar `WiFi.setAutoReconnect(true)` y `WiFi.persistent(true)`
+antes del `begin()`, y dentro del loop de `task_wifi_alexa` chequear periódicamente
+(cada ~5s) `WiFi.status()`; si no está conectado, hacer `WiFi.disconnect()` +
+`WiFi.begin()` con backoff, y saltear el `SinricPro.handle()` mientras no haya enlace.
+No volver a bloquear con un `while` infinito: la tarea tiene que seguir viva.
+
+### B3. Credenciales en claro commiteadas al repo
+
+**Dónde:** `src/core/config.h` — `WIFI_SSID`, `WIFI_PASSWORD`, `SINRICPRO_APP_KEY`,
+`SINRICPRO_APP_SECRET`.
+
+**Síntoma:** la contraseña del Wi-Fi de la casa y el secret de la cuenta de SinricPro
+están en texto plano dentro del control de versiones. El `APP_SECRET` da control sobre
+todos los dispositivos de esa cuenta SinricPro, no solo sobre este ESP32.
+
+**Arreglo propuesto:** mover esos cuatro defines a un `src/core/config_secrets.h`
+incluido desde `config.h` y agregado al `.gitignore`, dejando un
+`config_secrets.example.h` versionado como plantilla. Alternativa equivalente: pasarlos
+por `build_flags` en un `platformio.ini` local no versionado.
+**Importante:** quitarlos del archivo actual no los borra del historial de git — si el
+repo se llega a publicar, hay que además rotar la contraseña del Wi-Fi y regenerar las
+credenciales en el portal de SinricPro.
+
+### B4. (Mejora, no bug) Umbral de aplauso fijo en vez de adaptativo
+
+**Dónde:** `CLAP_RMS_THRESHOLD` en `src/core/config.h`, consumido por
+`src/audio/dsp_clap.cpp`.
+
+**Síntoma:** el umbral es un valor absoluto calibrado a mano (8500) contra un ambiente
+concreto. Un ventilador nuevo, la ventana abierta o mover el micrófono cambian el piso de
+ruido y obligan a recalibrar y reflashear. Si el piso sube demasiado, aparecen falsos
+positivos; si el umbral queda alto, el aplauso deja de detectarse.
+
+**Arreglo propuesto:** calcular en runtime un piso de ruido (media móvil del RMS de los
+últimos ~10s, ignorando los picos que superan el umbral vigente) y derivar el umbral
+efectivo como `max(piso * FACTOR, PISO_MINIMO)`. Dejar `CLAP_RMS_THRESHOLD` como piso
+mínimo absoluto para que un ambiente en silencio total no baje el umbral hasta detectar
+cualquier cosa. Ataca el mismo problema de falsos positivos que la funcionalidad 1 del
+roadmap, pero desde el lado del heurístico; ambas son complementarias.
