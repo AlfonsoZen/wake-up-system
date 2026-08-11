@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include <cmath>
+#include <cstdint>
 #include <esp_log.h>
 
 #include "core/config.h"
@@ -49,6 +50,10 @@ float burst_peak_zcr = 0.0f;
 bool waiting_for_second_peak = false;
 uint32_t first_peak_ms = 0;
 
+// Marca de tiempo del ultimo pico calificado (cualquiera, haya formado
+// parte de un par o no). 0 significa "ninguno todavia".
+uint32_t last_qualifying_peak_ms = 0;
+
 // Par de picos que parece un aplauso valido, pendiente de confirmar que no
 // venga nada mas detras (risas, conversacion siguen generando ruido).
 bool pending_confirmation = false;
@@ -75,6 +80,7 @@ void dsp_clap_reset() {
     burst_peak_zcr = 0.0f;
     waiting_for_second_peak = false;
     first_peak_ms = 0;
+    last_qualifying_peak_ms = 0;
     pending_confirmation = false;
     pending_confirm_deadline_ms = 0;
     pending_gap_ms = 0;
@@ -171,8 +177,22 @@ bool dsp_clap_process(const int16_t *samples, size_t sample_count, uint32_t now_
         }
 
         if (!waiting_for_second_peak) {
-            first_peak_ms = loud_start_ms;
-            waiting_for_second_peak = true;
+            // Solo arranca un intento de aplauso si hubo suficiente silencio
+            // antes de este pico. Musica con ritmo marcado (reggaeton, rock)
+            // genera golpes percusivos de forma continua, sin ese silencio
+            // previo - asi se descarta sin siquiera empezar a esperar el
+            // segundo golpe.
+            uint32_t silence_before_ms = (last_qualifying_peak_ms == 0)
+                ? UINT32_MAX
+                : (loud_start_ms - last_qualifying_peak_ms);
+
+            if (silence_before_ms >= CLAP_PRE_SILENCE_MS) {
+                first_peak_ms = loud_start_ms;
+                waiting_for_second_peak = true;
+            } else {
+                ESP_LOGI(TAG, "Pico ignorado como inicio de aplauso: silencio previo insuficiente (%ums, posible ritmo/musica)",
+                         silence_before_ms);
+            }
         } else {
             uint32_t gap_ms = loud_start_ms - first_peak_ms;
             if (gap_ms >= CLAP_MIN_GAP_MS && gap_ms <= CLAP_WINDOW_MS) {
@@ -190,6 +210,8 @@ bool dsp_clap_process(const int16_t *samples, size_t sample_count, uint32_t now_
             }
             waiting_for_second_peak = false;
         }
+
+        last_qualifying_peak_ms = loud_start_ms;
     }
 
     return detected;

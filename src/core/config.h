@@ -61,6 +61,15 @@
 // real del usuario (250-350ms entre golpes), con margen arriba.
 #define CLAP_WINDOW_MS 500
 
+// Silencio minimo (sin ningun pico calificado) exigido antes de aceptar un
+// pico como el "primero" de un posible aplauso. Musica con ritmo marcado
+// (reggaeton, rock) genera golpes percusivos cortos de forma continua, a
+// menudo separados justo por CLAP_MIN_GAP_MS-CLAP_WINDOW_MS (el mismo rango
+// "bailable" en el que cae un aplauso humano) - sin este filtro, un par de
+// golpes consecutivos de la cancion se lee como un aplauso valido. Un
+// aplauso deliberado, en cambio, casi siempre arranca desde silencio.
+#define CLAP_PRE_SILENCE_MS 1200
+
 // Separacion minima entre el primer y segundo aplauso. Se exige una pausa
 // clara (patron "clap ... clap" deliberado, no "clap-clap" pegado) porque es
 // mas facil de repetir consistentemente a mano, y porque una tos real suele
